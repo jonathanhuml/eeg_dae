@@ -3,8 +3,9 @@ import os
 import json
 import argparse
 import numpy as np
-import scipy.io
 import matplotlib.pyplot as plt
+
+from datasets.dreamer import load_dreamer_dataset
 
 try:
     from tensorflow.keras.models import model_from_json
@@ -12,57 +13,7 @@ except Exception:
     from keras.models import model_from_json
 
 
-def load_grid_map(mat_path: str) -> np.ndarray:
-    d = scipy.io.loadmat(mat_path, squeeze_me=True, struct_as_record=False)
-    if "map" not in d:
-        raise KeyError(f"{mat_path} missing key 'map'. Found keys: {[k for k in d.keys() if not k.startswith('__')]}")
-    grid = d["map"]
-    if not (isinstance(grid, np.ndarray) and grid.shape == (5, 5)):
-        raise ValueError(f"Expected map shape (5,5), got {type(grid)} {getattr(grid, 'shape', None)}")
-    out = np.empty_like(grid, dtype=object)
-    for i in range(5):
-        for j in range(5):
-            v = grid[i, j]
-            if isinstance(v, bytes):
-                v = v.decode("utf-8", errors="ignore")
-            out[i, j] = str(v)
-    return out
-
-
-def make_synthetic_signals(ch_names, n_samples=64, seed=0):
-    rng = np.random.default_rng(seed)
-    t = np.linspace(0, 1, n_samples, endpoint=False)
-    sigs = {}
-    for k, name in enumerate(ch_names):
-        f = 3 + (k % 10)
-        sigs[name] = np.sin(2 * np.pi * f * t) + 0.05 * rng.standard_normal(n_samples)
-    return sigs
-
-
-def build_8x8x8_examples(map5, signals, window_len=8, stride=8):
-    r0, c0 = 1, 1
-    H, W = 8, 8
-    any_sig = next(iter(signals.values()))
-    T = len(any_sig)
-
-    examples = []
-    for start in range(0, T - window_len + 1, stride):
-        x = np.zeros((H, W, window_len), dtype=np.float32)
-        for i in range(5):
-            for j in range(5):
-                ch = map5[i, j]
-                if ch is None or ch.strip() == "" or ch.lower() == "none":
-                    continue
-                x[r0 + i, c0 + j, :] = signals[ch][start:start + window_len]
-        examples.append(x)
-    return np.array(examples)
-
-
 def parse_occ_list(s: str):
-    """
-    Parse occlusions like: "3,3;4,4;2,5"
-    Returns list of (r,c) ints.
-    """
     out = []
     if s is None or s.strip() == "":
         return out
@@ -82,39 +33,82 @@ def occlude_cells(X, occ_rcs):
     return Xo
 
 
+def dreamer_to_model_input(x_torch):
+    """
+    x_torch: torch.Tensor with shape [F, H, W] (here F=4, H=W=9)
+    returns: np.ndarray float32 with shape [8, 8, 8] for the CNN
+    """
+    x = x_torch.detach().cpu().numpy().astype(np.float32)
+
+    # Ensure (F,H,W)
+    if x.ndim != 3:
+        raise ValueError(f"Expected DREAMER sample with 3 dims [F,H,W], got {x.shape}")
+
+    F, H, W = x.shape
+    if H < 8 or W < 8:
+        raise ValueError(f"Grid too small to crop to 8x8: got {H}x{W}")
+
+    # 1) Crop center to 8x8 (9x9 -> 8x8 by dropping last row/col or center crop)
+    # We'll do a simple top-left crop for determinism; you can switch to center crop if desired.
+    x_8 = x[:, :8, :8]  # (F,8,8)
+
+    # 2) Map F feature maps -> 8 slices
+    # Placeholder: tile feature dimension to length 8.
+    # If F=4 -> repeat twice => 8
+    if F == 8:
+        x_feat8 = x_8
+    elif F < 8:
+        reps = int(np.ceil(8 / F))
+        x_feat8 = np.tile(x_8, (reps, 1, 1))[:8, :, :]  # (8,8,8)
+    else:
+        # If F > 8, just take first 8
+        x_feat8 = x_8[:8, :, :]
+
+    # 3) Keras model expects (H,W,8) with channels_last
+    x_hw8 = np.transpose(x_feat8, (1, 2, 0))  # (8,8,8)
+    return x_hw8
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mat", default="10-20_system.mat")
     parser.add_argument("--model_json", default="./model/topology/model.json")
     parser.add_argument("--weights", default="./model/weights/nn_weights-800.hdf5")
     parser.add_argument("--occ", type=str, default="3,3", help='Occlusions like "3,3;4,4;2,5"')
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--out_png", default="example_plot.png")
+    parser.add_argument("--out_png", default="dreamer_example.png")
+    parser.add_argument("--n_samples", type=int, default=16, help="Number of DREAMER samples to use")
+    parser.add_argument("--io_path", type=str, default="", help="TorchEEG cache path to skip processing, e.g. .torcheeg/datasets_...")
+    parser.add_argument("--mat_path", type=str, default="/workspace/DREAMER.mat", help="Path to DREAMER.mat")
     args = parser.parse_args()
 
     repo_root = os.path.dirname(os.path.abspath(__file__))
     os.chdir(repo_root)
 
-    # Load model
+    # Load Keras model
     with open(args.model_json, "r") as f:
         architecture = json.load(f)
     nn = model_from_json(architecture)
     nn.load_weights(args.weights, by_name=True)
 
-    # Load mapping + synthetic data
-    map5 = load_grid_map(args.mat)
-    ch_names = sorted(set(map5.ravel().tolist()))
-    print(f"Loaded 5x5 map with {len(ch_names)} unique channel names")
+    # Load DREAMER dataset (use cache if provided)
+    if args.io_path.strip():
+        ds = load_dreamer_dataset(mat_path=args.mat_path, io_path=args.io_path.strip())
+    else:
+        ds = load_dreamer_dataset(mat_path=args.mat_path)
 
-    signals = make_synthetic_signals(ch_names, n_samples=64, seed=args.seed)
-    first_key = next(iter(signals))
-    print("signals dict: n_channels =", len(signals), "one signal shape =", signals[first_key].shape, "example key =", first_key)
+    # Build X batch for model
+    n = min(args.n_samples, len(ds))
+    X_list = []
+    y_list = []
 
-    # Build examples
-    X = build_8x8x8_examples(map5, signals, window_len=8, stride=8)
-    print("X shape:", X.shape)
+    for i in range(n):
+        x_t, y = ds[i]  # x_t: torch.Tensor [F,H,W]
+        X_list.append(dreamer_to_model_input(x_t))
+        y_list.append(int(y))
 
-    # Occlude multiple cells
+    X = np.stack(X_list, axis=0)  # (n,8,8,8)
+    print("Built model input X:", X.shape, "labels example:", y_list[:5])
+
+    # Occlusions
     occ_rcs = parse_occ_list(args.occ)
     if len(occ_rcs) == 0:
         raise ValueError("No occlusions provided. Use --occ like '3,3;4,4'")
@@ -126,30 +120,27 @@ def main():
     X_occ = occlude_cells(X, occ_rcs)
 
     # Predict
-    Y_pred = nn.predict(X_occ, verbose=0)
+    Y_pred = nn.predict(X_occ, verbose=0)  # (n,8,8,8)
 
-    # Plot per-occluded-cell
+    # Plot per occluded cell: compare original vs recon across dataset samples
     nplots = len(occ_rcs)
     ncols = min(2, nplots)
     nrows = int(np.ceil(nplots / ncols))
-
     fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(7 * ncols, 3.5 * nrows))
     axes = np.array(axes).reshape(-1)
 
     for ax_i, (r, c) in enumerate(occ_rcs):
         true_trace = X[:, r, c, :].reshape(-1)
         pred_trace = Y_pred[:, r, c, :].reshape(-1)
-
         axes[ax_i].plot(true_trace, label="True")
         axes[ax_i].plot(pred_trace, label="NN recon")
-        axes[ax_i].set_title(f"Occluded cell ({r},{c})")
+        axes[ax_i].set_title(f"DREAMER occluded cell ({r},{c})")
         axes[ax_i].legend()
 
-    # Hide unused axes
     for j in range(nplots, len(axes)):
         axes[j].axis("off")
 
-    fig.suptitle("Multi-channel interpolation (NN) on occluded grid cells")
+    fig.suptitle("NN interpolation on DREAMER (ToGrid + DE features)")
     fig.tight_layout()
     fig.savefig(args.out_png, dpi=150)
     print(f"Saved plot to {args.out_png}")
@@ -157,3 +148,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

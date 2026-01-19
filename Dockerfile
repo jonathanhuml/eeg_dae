@@ -17,9 +17,9 @@ RUN python -m pip install --upgrade pip \
       mne \
       torcheeg
 
-# Install PyTorch (GPU) on x86_64 DGX (CUDA 12.4 wheels are typically compatible with this container)
-# If you only need CPU torch, use: pip install torch torchvision torchaudio
-RUN python -m pip install --index-url https://download.pytorch.org/whl/cu124 \
-      torch torchvision torchaudio
+# CPU-only torch to avoid CUDA/cuDNN library conflicts with TensorFlow container
+RUN python -m pip install --index-url https://download.pytorch.org/whl/cpu \
+    torch torchvision torchaudio
+
 
 CMD ["bash"]

@@ -1,0 +1,14 @@
+# ---- Data (never commit datasets) ----
+data/
+*.mat
+
+# ---- TorchEEG cache ----
+.torcheeg/
+
+# ---- Outputs / figures ----
+*.png
+*.pdf
+
+# ---- Python ----
+__pycache__/
+*.py

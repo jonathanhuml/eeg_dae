@@ -1,0 +1,14 @@
+# Data
+data/
+*.mat
+.torcheeg/
+
+# Outputs
+*.png
+*.pdf
+
+# VCS & Python
+.git/
+__pycache__/
+*.pyc
+
