@@ -1,14 +1,24 @@
 # ---- Data (never commit datasets) ----
-data/
-*.mat
+data/**/*.mat
+data/**/*.h5
+data/**/*.edf
+data/**/*.csv
+data/**/*.npy
+data/**/*.npz
+data/**/*.pt
+data/**/*.pth
+data/**/*.zip
+data/**/*.tar
+data/**/*.tar.gz
+
+# If you want to ignore only raw/processed data directories but keep scripts:
+# data/raw/
+# data/processed/
 
 # ---- TorchEEG cache ----
 .torcheeg/
 
-# ---- Outputs / figures ----
-*.png
-*.pdf
-
 # ---- Python ----
 __pycache__/
-*.py
+*.pyc
+

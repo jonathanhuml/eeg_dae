@@ -18,8 +18,8 @@ RUN python -m pip install --upgrade pip \
       torcheeg
 
 # CPU-only torch to avoid CUDA/cuDNN library conflicts with TensorFlow container
-RUN python -m pip install --index-url https://download.pytorch.org/whl/cpu \
-    torch torchvision torchaudio
+# RUN python -m pip install --index-url https://download.pytorch.org/whl/cpu \
+#    torch torchvision torchaudio
 
 
 CMD ["bash"]
