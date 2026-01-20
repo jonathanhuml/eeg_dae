@@ -133,6 +133,7 @@ def main():
     else:
         ds = load_dreamer_dataset(mat_path=args.mat_path)
 
+    # test loading functions
     eeg, label = ds[0]
     print("eeg:", eeg.shape)
     print("label:", label)
