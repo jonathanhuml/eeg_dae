@@ -15,6 +15,7 @@ RUN python -m pip install --upgrade pip \
       scipy \
       vincenty \
       mne \
+      mne-bids \
       torcheeg
 
 # CPU-only torch to avoid CUDA/cuDNN library conflicts with TensorFlow container
