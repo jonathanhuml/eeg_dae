@@ -5,8 +5,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import scipy.io as sio
-
-
 import matplotlib.pyplot as plt
 from utils.preprocess_dae import (
     canon,
@@ -16,7 +14,6 @@ from utils.preprocess_dae import (
     grid_padding,
     evaluate_and_plot_occluded_cell,
 )
-
 try:
     from tensorflow.keras.models import model_from_json
 except Exception:
@@ -40,7 +37,7 @@ map_df.columns = ["ten20", "egi"]
 map_df["ten20_c"] = map_df["ten20"].map(canon)     # e.g. "fp1"
 map_df["egi_c"]   = map_df["egi"].map(canon)       # e.g. "e37" OR "E37" -> "e37"
 
-# --- Load 10-20 grid from .mat and extract 10-20 labels present ---
+# --- Load 10-20 Intl. Standard grid ---
 mat = sio.loadmat(ROOT / "10-20_system.mat")
 grid = mat["map"]  # 5x5 cell array
 
@@ -58,13 +55,8 @@ for token in grid_clean.flatten():
             ten20_from_mat.add(core)
 
 ten20_from_mat = sorted(ten20_from_mat)
-print("10-20 labels in mat grid:", ten20_from_mat)
-print("Count:", len(ten20_from_mat))
-
 # --- Map those 10-20 labels -> EGI channel names (e37, e46, ...) ---
 wanted_map = map_df[map_df["ten20_c"].isin(ten20_from_mat)].copy()
-
-# sanity check: are we missing any mat labels?
 missing = set(ten20_from_mat) - set(wanted_map["ten20_c"])
 if missing:
     print("WARNING: mat labels missing from CSV map:", sorted(missing))
@@ -73,16 +65,10 @@ if missing:
 # - channels.tsv uses 'e1','e2',...
 # - map gives 'E37' so canon -> 'e37' is correct
 wanted_egi = sorted(set(wanted_map["egi_c"]))
-print("Mapped EGI channels:", wanted_egi)
-print("Mapped count:", len(wanted_egi))
 
 # --- Filter electrodes.tsv to those channels and show coordinates ---
 electrodes["name_c"] = electrodes["name"].map(canon)  # 'e1' -> 'e1'
 electrodes_1020 = electrodes[electrodes["name_c"].isin(wanted_egi)].copy()
-
-print("electrodes_1020 rows:", len(electrodes_1020))
-print(electrodes_1020[["name","x","y","z"]].head())
-
 channels["name_c"] = channels["name"].map(canon)
 name_to_idx = {nm: i for i, nm in enumerate(channels["name_c"].tolist())}
 valid = [nm for nm in wanted_egi if nm in name_to_idx]
@@ -131,7 +117,7 @@ for i in range(5):
 # G5: (N, n_win, 5, 5, 8)
 G5_flat = G5.reshape(N * n_win, 5, 5, 8)
 
-# ---- MINIMAL FIX: match the DAE preprocessing (zscore=True) ----
+# ---- Match the DAE preprocessing (zscore=True) ----
 mu = G5_flat.mean(axis=-1, keepdims=True)
 sd = G5_flat.std(axis=-1, keepdims=True) + 1e-8
 G5z = (G5_flat - mu) / sd
@@ -160,6 +146,6 @@ results = evaluate_and_plot_occluded_cell(
     Y_pred=Y_pred,
     occ_5x5=(2, 2),               
     out_png="localize_occlusion_eval.png",
-    max_epochs_plot=10,
-    seed=0
+    max_epochs_plot=30,
+    seed=3
 )
